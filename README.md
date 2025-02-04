@@ -17,6 +17,7 @@ source venv/bin/activate  # On Windows use: venv\Scripts\activate
 ```bash
 pip install -r requirements.txt
 ```
+Example
 
 4. Set up your Spotify API credentials:
    - Go to [Spotify Developer Dashboard](https://developer.spotify.com/dashboard)
