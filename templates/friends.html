@@ -1,0 +1,147 @@
+{% extends "base.html" %}
+
+{% block content %}
+<style>
+    .friends-container {
+        padding: 2rem 0;
+    }
+
+    .friend-card {
+        background: var(--card);
+        border-radius: 15px;
+        padding: 1.5rem;
+        margin-bottom: 2rem;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    }
+
+    .friend-header {
+        display: flex;
+        align-items: center;
+        margin-bottom: 1.5rem;
+    }
+
+    .friend-avatar {
+        width: 60px;
+        height: 60px;
+        border-radius: 50%;
+        margin-right: 1rem;
+        object-fit: cover;
+    }
+
+    .friend-info h3 {
+        margin: 0;
+        color: var(--foreground);
+    }
+
+    .playlists-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+        gap: 1rem;
+    }
+
+    .playlist-card {
+        background: var(--accent);
+        border-radius: 10px;
+        padding: 1rem;
+        transition: transform 0.3s ease;
+    }
+
+    .playlist-card:hover {
+        transform: translateY(-5px);
+    }
+
+    .playlist-cover {
+        width: 100%;
+        aspect-ratio: 1;
+        border-radius: 8px;
+        margin-bottom: 0.5rem;
+        object-fit: cover;
+    }
+
+    .playlist-info h4 {
+        margin: 0;
+        font-size: 1rem;
+        color: var(--foreground);
+        margin-bottom: 0.25rem;
+    }
+
+    .playlist-info p {
+        margin: 0;
+        font-size: 0.875rem;
+        color: var(--foreground-muted);
+    }
+
+    .spotify-link {
+        color: var(--primary);
+        text-decoration: none;
+        display: inline-flex;
+        align-items: center;
+        margin-top: 0.5rem;
+    }
+
+    .spotify-link:hover {
+        text-decoration: underline;
+    }
+
+    .no-friends-message {
+        text-align: center;
+        padding: 3rem;
+        color: var(--foreground-muted);
+    }
+</style>
+
+<div class="container friends-container">
+    <h1 class="display-5 mb-4" style="color: var(--foreground); font-weight: 600;">Your Spotify Friends</h1>
+    
+    {% if friends %}
+        {% for friend in friends %}
+            <div class="friend-card">
+                <div class="friend-header">
+                    {% if friend.image_url %}
+                        <img src="{{ friend.image_url }}" alt="{{ friend.name }}" class="friend-avatar">
+                    {% else %}
+                        <div class="friend-avatar" style="background: var(--primary)"></div>
+                    {% endif %}
+                    <div class="friend-info">
+                        <h3>{{ friend.name }}</h3>
+                    </div>
+                </div>
+                
+                {% if friend.playlists %}
+                    <div class="playlists-grid">
+                        {% for playlist in friend.playlists %}
+                            <div class="playlist-card">
+                                {% if playlist.image_url %}
+                                    <img src="{{ playlist.image_url }}" alt="{{ playlist.name }}" class="playlist-cover">
+                                {% else %}
+                                    <div class="playlist-cover" style="background: var(--primary)"></div>
+                                {% endif %}
+                                <div class="playlist-info">
+                                    <h4>{{ playlist.name }}</h4>
+                                    <p>{{ playlist.tracks_total }} tracks</p>
+                                    <a href="https://open.spotify.com/playlist/{{ playlist.id }}" target="_blank" class="spotify-link">
+                                        Open in Spotify
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-spotify ms-1" viewBox="0 0 16 16">
+                                            <path d="M8 0a8 8 0 1 0 0 16A8 8 0 0 0 8 0zm3.669 11.538a.498.498 0 0 1-.686.165c-1.879-1.147-4.243-1.407-7.028-.77a.499.499 0 0 1-.222-.973c3.048-.696 5.662-.397 7.77.892a.5.5 0 0 1 .166.686zm.979-2.178a.624.624 0 0 1-.858.205c-2.15-1.321-5.428-1.704-7.972-.932a.625.625 0 0 1-.362-1.194c2.905-.881 6.517-.454 8.986 1.063a.624.624 0 0 1 .206.858zm.084-2.268C10.154 5.56 5.9 5.419 3.438 6.166a.748.748 0 1 1-.434-1.432c2.825-.857 7.523-.692 10.492 1.07a.747.747 0 1 1-.764 1.288z"/>
+                                        </svg>
+                                    </a>
+                                </div>
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <p class="text-center text-muted">No public playlists available</p>
+                {% endif %}
+            </div>
+        {% endfor %}
+    {% else %}
+        <div class="no-friends-message">
+            <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" fill="currentColor" class="bi bi-people mb-3" viewBox="0 0 16 16">
+                <path d="M15 14s1 0 1-1-1-4-5-4-5 3-5 4 1 1 1 1h8Zm-7.978-1A.261.261 0 0 1 7 12.996c.001-.264.167-1.03.76-1.72C8.312 10.629 9.282 10 11 10c1.717 0 2.687.63 3.24 1.276.593.69.758 1.457.76 1.72l-.008.002a.274.274 0 0 1-.014.002H7.022ZM11 7a2 2 0 1 0 0-4 2 2 0 0 0 0 4Zm3-2a3 3 0 1 1-6 0 3 3 0 0 1 6 0ZM6.936 9.28a5.88 5.88 0 0 0-1.23-.247A7.35 7.35 0 0 0 5 9c-4 0-5 3-5 4 0 .667.333 1 1 1h4.216A2.238 2.238 0 0 1 5 13c0-1.01.377-2.042 1.09-2.904.243-.294.526-.569.846-.816ZM4.92 10A5.493 5.493 0 0 0 4 13H1c0-.26.164-1.03.76-1.724.545-.636 1.492-1.256 3.16-1.275ZM1.5 5.5a3 3 0 1 1 6 0 3 3 0 0 1-6 0Zm3-2a2 2 0 1 0 0 4 2 2 0 0 0 0-4Z"/>
+            </svg>
+            <h3 class="mb-2">No Friends Found</h3>
+            <p>Try following some Spotify users to see their public playlists here!</p>
+        </div>
+    {% endif %}
+</div>
+{% endblock %} 

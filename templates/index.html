@@ -94,9 +94,48 @@
     margin-bottom: 2rem;
     font-weight: 600;
   }
+
+  .modal-content {
+    background: var(--card);
+    border: none;
+    border-radius: 15px;
+  }
+
+  .modal-header {
+    border-bottom: 1px solid var(--border);
+  }
+
+  .modal-footer {
+    border-top: 1px solid var(--border);
+  }
+
+  .toast {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+  }
+
+  .toast-header {
+    background: var(--card);
+    border-bottom: 1px solid var(--border);
+    color: var(--foreground);
+  }
+
+  .toast-body {
+    color: var(--foreground);
+  }
 </style>
 
 <div class="container py-5">
+    <div class="d-flex justify-content-end mb-4">
+        <button class="btn btn-spotify" onclick="openPersonalizeModal()">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-person-circle me-2" viewBox="0 0 16 16">
+                <path d="M11 6a3 3 0 1 1-6 0 3 3 0 0 1 6 0z"/>
+                <path fill-rule="evenodd" d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8zm8-7a7 7 0 0 0-5.468 11.37C3.242 11.226 4.805 10 8 10s4.757 1.225 5.468 2.37A7 7 0 0 0 8 1z"/>
+            </svg>
+            Personalize
+        </button>
+    </div>
     <h1 class="display-4 mb-4 display-title text-center">Spotify Song Rate</h1>
     <p class="lead mb-5 text-center" style="color: var(--foreground-muted);">
         <span class="typing-animation">Rate and discover new music with friends! 🎵</span>
@@ -186,8 +225,57 @@
     </div>
 </div>
 
+<!-- Personalize Modal -->
+<div class="modal fade" id="personalizeModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Set Your Spotify ID</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label for="spotifyId" class="form-label">Spotify ID</label>
+                    <input type="text" class="form-control" id="spotifyId" placeholder="Enter your Spotify ID">
+                    <div class="form-text">
+                        You can find your Spotify ID in your Spotify account settings or profile URL.
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-spotify" onclick="saveSpotifyId()">Save</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Welcome Toast -->
+<div class="toast-container position-fixed bottom-0 end-0 p-3">
+    <div id="welcomeToast" class="toast" role="alert">
+        <div class="toast-header">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-spotify me-2" viewBox="0 0 16 16">
+                <path d="M8 0a8 8 0 1 0 0 16A8 8 0 0 0 8 0zm3.669 11.538a.498.498 0 0 1-.686.165c-1.879-1.147-4.243-1.407-7.028-.77a.499.499 0 0 1-.222-.973c3.048-.696 5.662-.397 7.77.892a.5.5 0 0 1 .166.686zm.979-2.178a.624.624 0 0 1-.858.205c-2.15-1.321-5.428-1.704-7.972-.932a.625.625 0 0 1-.362-1.194c2.905-.881 6.517-.454 8.986 1.063a.624.624 0 0 1 .206.858zm.084-2.268C10.154 5.56 5.9 5.419 3.438 6.166a.748.748 0 1 1-.434-1.432c2.825-.857 7.523-.692 10.492 1.07a.747.747 0 1 1-.764 1.288z"/>
+            </svg>
+            <strong class="me-auto">Welcome!</strong>
+            <button type="button" class="btn-close" data-bs-dismiss="toast"></button>
+        </div>
+        <div class="toast-body" id="welcomeMessage"></div>
+    </div>
+</div>
+
 <script>
 document.addEventListener('DOMContentLoaded', function() {
+    // Check for existing Spotify ID
+    const spotifyId = localStorage.getItem('spotifyId');
+    if (spotifyId) {
+        document.getElementById('spotifyId').value = spotifyId;
+    }
+    
+    // Update Friends link to include Spotify ID
+    updateFriendsLink();
+
+    // Album cover functionality
     const albumCovers = [
         {
             url: "https://i.scdn.co/image/ab67616d0000b273318443aab3531a0558e79a4d",
@@ -238,6 +326,62 @@ document.addEventListener('DOMContentLoaded', function() {
     document.querySelector('.album-grid').addEventListener('click', function() {
         updateAlbumCovers();
     });
+
+    // Check if user is logged in (session has user_id)
+    const userId = '{{ session.get("user_id", "") }}';
+    const displayName = '{{ session.get("display_name", "") }}';
+    
+    if (userId && displayName) {
+        // Show welcome toast for logged-in user
+        const welcomeMessage = document.getElementById('welcomeMessage');
+        welcomeMessage.textContent = `Welcome back, ${displayName}!`;
+        const toast = new bootstrap.Toast(document.getElementById('welcomeToast'));
+        toast.show();
+    }
 });
+
+function openPersonalizeModal() {
+    // Redirect to Spotify login
+    window.location.href = '/login';
+}
+
+function updateFriendsLink() {
+    const spotifyId = localStorage.getItem('spotifyId');
+    const friendsLink = document.getElementById('friendsLink');
+    
+    if (friendsLink && spotifyId) {
+        const baseUrl = friendsLink.getAttribute('href').split('?')[0];
+        const encodedId = encodeURIComponent(spotifyId);
+        friendsLink.href = `${baseUrl}?spotify_id=${encodedId}`;
+    }
+}
+
+function saveSpotifyId() {
+    const spotifyId = document.getElementById('spotifyId').value.trim();
+    
+    if (!spotifyId) {
+        alert('Please enter your Spotify ID');
+        return;
+    }
+    
+    // Clean the Spotify ID (remove any special characters or spaces)
+    const cleanSpotifyId = spotifyId.replace(/[^a-zA-Z0-9_.]/g, '');
+    
+    // Save to localStorage
+    localStorage.setItem('spotifyId', cleanSpotifyId);
+    
+    // Show welcome toast
+    const welcomeMessage = document.getElementById('welcomeMessage');
+    welcomeMessage.textContent = `Welcome, ${cleanSpotifyId}!`;
+    const toast = new bootstrap.Toast(document.getElementById('welcomeToast'));
+    toast.show();
+    
+    // Update Friends link
+    updateFriendsLink();
+    
+    // Close modal
+    const modal = bootstrap.Modal.getInstance(document.getElementById('personalizeModal'));
+    modal.hide();
+}
 </script>
 {% endblock %} 

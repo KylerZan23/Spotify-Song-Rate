@@ -1,35 +1,62 @@
-from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, send_file
+from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, send_file, session
 from flask_sqlalchemy import SQLAlchemy
+from flask_cors import CORS
 import spotipy
 from spotipy.oauth2 import SpotifyClientCredentials, SpotifyOAuth
+from spotipy.cache_handler import FlaskSessionCacheHandler
 import os
 from dotenv import load_dotenv
 import re
 import csv
 from io import StringIO
 from datetime import datetime
-from flask import session
 import random
-import pytz  # Add this import at the top
+import pytz
+import secrets
+import urllib.parse
 
 # Load environment variables
 load_dotenv()
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = os.urandom(24)
+app.config['SECRET_KEY'] = secrets.token_hex(16)  # Generate a secure secret key
+app.config['SESSION_COOKIE_NAME'] = 'spotify-login-session'
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///songs.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-# Set Spotify credentials as environment variables
-os.environ['SPOTIPY_CLIENT_ID'] = os.getenv('SPOTIFY_CLIENT_ID', '')
-os.environ['SPOTIPY_CLIENT_SECRET'] = os.getenv('SPOTIFY_CLIENT_SECRET', '')
-os.environ['SPOTIPY_REDIRECT_URI'] = os.getenv('SPOTIPY_REDIRECT_URI', 'http://localhost:5000/callback')
+# Configure CORS with specific settings
+CORS(app, resources={
+    r"/*": {
+        "origins": ["http://localhost:5000"],
+        "methods": ["GET", "POST", "OPTIONS"],
+        "allow_headers": ["Content-Type", "Authorization"],
+        "supports_credentials": True
+    }
+})
+
+# Set Spotify credentials
+SPOTIFY_CLIENT_ID = os.getenv('SPOTIFY_CLIENT_ID', '')
+SPOTIFY_CLIENT_SECRET = os.getenv('SPOTIFY_CLIENT_SECRET', '')
+SPOTIFY_REDIRECT_URI = 'http://localhost:5000/callback'
 
 db = SQLAlchemy(app)
 
 # Initialize Spotify clients
-spotify_client_creds = spotipy.Spotify(auth_manager=SpotifyClientCredentials())
-spotify_oauth = spotipy.Spotify(auth_manager=SpotifyOAuth(scope='playlist-read-private'))
+spotify_client_creds = spotipy.Spotify(auth_manager=SpotifyClientCredentials(
+    client_id=SPOTIFY_CLIENT_ID,
+    client_secret=SPOTIFY_CLIENT_SECRET
+))
+
+# Initialize OAuth with proper configuration
+cache_handler = FlaskSessionCacheHandler(session)
+auth_manager = SpotifyOAuth(
+    client_id=SPOTIFY_CLIENT_ID,
+    client_secret=SPOTIFY_CLIENT_SECRET,
+    redirect_uri=SPOTIFY_REDIRECT_URI,
+    scope='user-read-private user-read-email user-follow-read playlist-read-collaborative',
+    cache_handler=cache_handler,
+    show_dialog=True
+)
 
 class Playlist(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -94,6 +121,12 @@ def extract_spotify_id(spotify_url):
     match = re.search(r'track/([a-zA-Z0-9]+)', spotify_url)
     return match.group(1) if match else None
 
+@app.before_request
+def before_request():
+    # Ensure session is available
+    if not session.get('session_id'):
+        session['session_id'] = secrets.token_urlsafe(32)
+
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -116,7 +149,7 @@ def input_mode():
 
         try:
             # Verify Spotify credentials are loaded
-            if not os.getenv('SPOTIFY_CLIENT_ID') or not os.getenv('SPOTIFY_CLIENT_SECRET'):
+            if not SPOTIFY_CLIENT_ID or not SPOTIFY_CLIENT_SECRET:
                 flash('Spotify API credentials are not properly configured. Please check your .env file.')
                 return redirect(url_for('input_mode'))
 
@@ -283,7 +316,7 @@ def rate_mode():
 @app.route('/api/playlists/<playlist_id>', methods=['GET'])
 def get_playlist(playlist_id):
     try:
-        playlist_data = spotify_oauth.playlist(playlist_id)
+        playlist_data = spotify_client_creds.playlist(playlist_id)
         
         # Create or update playlist in database
         playlist = Playlist.query.filter_by(spotify_id=playlist_id).first()
@@ -518,6 +551,133 @@ def playlist_preview(playlist_id):
         return jsonify(preview_data)
     except Exception as e:
         return jsonify({'error': str(e)}), 400
+
+@app.route('/login')
+def login():
+    """Initialize Spotify OAuth when user clicks Personalize"""
+    try:
+        # Create a new OAuth instance for this request
+        auth_manager = SpotifyOAuth(
+            client_id=SPOTIFY_CLIENT_ID,
+            client_secret=SPOTIFY_CLIENT_SECRET,
+            redirect_uri=SPOTIFY_REDIRECT_URI,
+            scope='user-read-private user-read-email user-follow-read playlist-read-collaborative',
+            show_dialog=True,
+            cache_handler=cache_handler
+        )
+        
+        # Get the authorization URL
+        auth_url = auth_manager.get_authorize_url()
+        return redirect(auth_url)
+        
+    except Exception as e:
+        print(f"Login error: {str(e)}")
+        flash('Failed to initialize Spotify login. Please try again.')
+        return redirect(url_for('index'))
+
+@app.route('/callback')
+def callback():
+    """Handle the Spotify OAuth callback"""
+    try:
+        # Create a new OAuth instance
+        auth_manager = SpotifyOAuth(
+            client_id=SPOTIFY_CLIENT_ID,
+            client_secret=SPOTIFY_CLIENT_SECRET,
+            redirect_uri=SPOTIFY_REDIRECT_URI,
+            scope='user-read-private user-read-email user-follow-read playlist-read-collaborative',
+            cache_handler=cache_handler
+        )
+        
+        # Get the access token
+        code = request.args.get('code')
+        token_info = auth_manager.get_access_token(code)
+        
+        if not token_info:
+            flash('Failed to get access token. Please try again.')
+            return redirect(url_for('index'))
+        
+        # Create Spotify client with token
+        sp = spotipy.Spotify(auth=token_info['access_token'])
+        
+        # Get user profile
+        user_info = sp.current_user()
+        
+        # Store necessary info in session
+        session['token_info'] = token_info
+        session['user_id'] = user_info['id']
+        session['display_name'] = user_info['display_name']
+        
+        # Redirect to index with success message
+        flash(f'Successfully logged in as {user_info["display_name"]}')
+        return redirect(url_for('index'))
+        
+    except Exception as e:
+        print(f"Callback error: {str(e)}")
+        flash('Authentication failed. Please try again.')
+        return redirect(url_for('index'))
+
+@app.route('/friends')
+def friends_mode():
+    """Handle friends page access"""
+    # Check if user is authenticated
+    token_info = session.get('token_info')
+    if not token_info:
+        flash('Please log in using the Personalize button first.')
+        return redirect(url_for('index'))
+    
+    try:
+        # Create Spotify client with stored token
+        sp = spotipy.Spotify(auth=token_info['access_token'])
+        
+        try:
+            # Verify the token still works
+            sp.current_user()
+        except:
+            # Token might be expired, clear session and redirect to login
+            session.clear()
+            flash('Your session has expired. Please log in again.')
+            return redirect(url_for('login'))
+        
+        # Get user's followed artists and users
+        followed = sp.current_user_followed_artists()
+        friends_data = []
+        
+        if followed and 'artists' in followed and 'items' in followed['artists']:
+            for item in followed['artists']['items']:
+                try:
+                    if item['type'] == 'user':
+                        friend_info = {
+                            'id': item['id'],
+                            'name': item['display_name'],
+                            'image_url': item['images'][0]['url'] if item.get('images') else None,
+                            'playlists': []
+                        }
+                        
+                        playlists = sp.user_playlists(item['id'])
+                        for playlist in playlists['items']:
+                            if playlist.get('public', True):
+                                friend_info['playlists'].append({
+                                    'id': playlist['id'],
+                                    'name': playlist['name'],
+                                    'image_url': playlist['images'][0]['url'] if playlist.get('images') else None,
+                                    'tracks_total': playlist['tracks']['total']
+                                })
+                        
+                        if friend_info['playlists']:
+                            friends_data.append(friend_info)
+                except Exception as e:
+                    print(f"Error processing user {item['id']}: {str(e)}")
+                    continue
+        
+        if not friends_data:
+            flash('No friends with public playlists found. Try following some Spotify users!')
+        
+        return render_template('friends.html', friends=friends_data)
+        
+    except Exception as e:
+        flash(f'Error accessing Spotify: {str(e)}')
+        session.clear()  # Clear invalid session
+        return redirect(url_for('index'))
 
 if __name__ == '__main__':
     with app.app_context():
