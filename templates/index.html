@@ -23,7 +23,7 @@
     aspect-ratio: 1;
     overflow: hidden;
     border-radius: 10px;
-    transition: transform 0.3s ease;
+    transition: opacity 0.5s ease, transform 0.3s ease;
   }
 
   .album-item:hover {
@@ -35,6 +35,16 @@
     height: 100%;
     object-fit: cover;
     border-radius: 10px;
+    opacity: 1;
+    transition: opacity 0.5s ease;
+  }
+
+  .album-cover.fade-out {
+    opacity: 0;
+  }
+
+  .album-cover.fade-in {
+    opacity: 1;
   }
 
   .card {
@@ -92,19 +102,18 @@
         <span class="typing-animation">Rate and discover new music with friends! 🎵</span>
     </p>
 
-    <h2 class="section-title text-center">Featured Albums</h2>
     <div class="album-grid mb-5">
         <div class="album-item">
-            <img src="https://i.scdn.co/image/ab67616d0000b273318443aab3531a0558e79a4d" alt="Album Cover - After Hours" class="album-cover">
+            <img src="https://i.scdn.co/image/ab67616d0000b273318443aab3531a0558e79a4d" alt="The Weeknd - After Hours" class="album-cover">
         </div>
         <div class="album-item">
-            <img src="https://i.scdn.co/image/ab67616d0000b273d9194aa18fa4c9362b47464f" alt="Album Cover - Midnights" class="album-cover">
+            <img src="https://i.scdn.co/image/ab67616d0000b273d9194aa18fa4c9362b47464f" alt="Taylor Swift - Midnights" class="album-cover">
         </div>
         <div class="album-item">
-            <img src="https://i.scdn.co/image/ab67616d0000b2734ab2520c2c77a1d66b9ee21d" alt="Album Cover - Harry's House" class="album-cover">
+            <img src="https://i.scdn.co/image/ab67616d0000b2734ab2520c2c77a1d66b9ee21d" alt="Harry Styles - Harry's House" class="album-cover">
         </div>
         <div class="album-item">
-            <img src="https://i.scdn.co/image/ab67616d0000b27352b2a3824413eefe9e33817a" alt="Album Cover - Renaissance" class="album-cover">
+            <img src="https://i.scdn.co/image/ab67616d0000b27352b2a3824413eefe9e33817a" alt="Beyoncé - Renaissance" class="album-cover">
         </div>
     </div>
     
@@ -179,24 +188,56 @@
 
 <script>
 document.addEventListener('DOMContentLoaded', function() {
-    const albumItems = document.querySelectorAll('.album-item');
-    
-    function rotateAlbums() {
-        albumItems.forEach((item, index) => {
+    const albumCovers = [
+        {
+            url: "https://i.scdn.co/image/ab67616d0000b273318443aab3531a0558e79a4d",
+            alt: "The Weeknd - After Hours"
+        },
+        {
+            url: "https://i.scdn.co/image/ab67616d0000b273d9194aa18fa4c9362b47464f",
+            alt: "Taylor Swift - Midnights"
+        },
+        {
+            url: "https://i.scdn.co/image/ab67616d0000b2734ab2520c2c77a1d66b9ee21d",
+            alt: "Harry Styles - Harry's House"
+        },
+        {
+            url: "https://i.scdn.co/image/ab67616d0000b27352b2a3824413eefe9e33817a",
+            alt: "Beyoncé - Renaissance"
+        }
+    ];
+
+    function shuffleArray(array) {
+        for (let i = array.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [array[i], array[j]] = [array[j], array[i]];
+        }
+        return array;
+    }
+
+    function updateAlbumCovers() {
+        const shuffledCovers = shuffleArray([...albumCovers]);
+        document.querySelectorAll('.album-item img').forEach((img, index) => {
+            img.style.opacity = '0';
             setTimeout(() => {
-                item.style.transform = 'scale(1.05)';
+                img.src = shuffledCovers[index].url;
+                img.alt = shuffledCovers[index].alt;
+                img.style.opacity = '1';
+                img.style.transform = 'scale(1.05)';
                 setTimeout(() => {
-                    item.style.transform = 'scale(1)';
+                    img.style.transform = 'scale(1)';
                 }, 200);
-            }, index * 200);
+            }, 300);
         });
     }
 
-    // Initial animation
-    setTimeout(rotateAlbums, 1000);
-    
-    // Repeat animation every 10 seconds
-    setInterval(rotateAlbums, 10000);
+    // Initial shuffle on page load
+    updateAlbumCovers();
+
+    // Add click event to the album grid container
+    document.querySelector('.album-grid').addEventListener('click', function() {
+        updateAlbumCovers();
+    });
 });
 </script>
 {% endblock %} 

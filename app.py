@@ -10,6 +10,7 @@ from io import StringIO
 from datetime import datetime
 from flask import session
 import random
+import pytz  # Add this import at the top
 
 # Load environment variables
 load_dotenv()
@@ -374,6 +375,15 @@ def overview_mode():
     # Get username from query parameter if provided
     username = request.args.get('username', '')
     
+    # Check if group_by_user is in the request, otherwise use session value or default to false
+    if 'group_by_user' in request.args:
+        group_by_user = request.args.get('group_by_user') == 'true'
+        # Store the preference in session
+        session['group_by_user'] = group_by_user
+    else:
+        # Use stored preference or default to false
+        group_by_user = session.get('group_by_user', False)
+    
     # Base query for ratings
     query = db.session.query(Rating, Song).join(Song)
     
@@ -387,41 +397,105 @@ def overview_mode():
     # Get all ratings with their associated songs
     ratings = query.all()
     
-    # Group ratings by song
-    songs_data = {}
-    for rating, song in ratings:
-        if song.id not in songs_data:
-            # Get song artwork using Spotify API
-            try:
-                track_info = spotify_client_creds.track(song.spotify_id)
-                artwork_url = track_info['album']['images'][0]['url'] if track_info['album']['images'] else None
-            except:
-                artwork_url = None
-                
-            songs_data[song.id] = {
-                'id': song.id,
-                'name': song.name,
-                'artist': song.artist,
-                'link': song.link,
-                'spotify_id': song.spotify_id,
-                'artwork_url': artwork_url,
-                'ratings': [],
-                'average_rating': song.average_rating()
-            }
-        songs_data[song.id]['ratings'].append({
-            'username': rating.username,
-            'rating': rating.rating,
-            'date': rating.created_at.strftime('%Y-%m-%d %H:%M')
-        })
+    # Set up timezone conversion
+    utc = pytz.UTC
+    pst = pytz.timezone('America/Los_Angeles')
+    
+    if group_by_user:
+        # Group by users
+        users_data = {}
+        for rating, song in ratings:
+            if rating.username not in users_data:
+                users_data[rating.username] = []
+            
+            # Check if song already exists in user's list
+            song_exists = False
+            for existing_song in users_data[rating.username]:
+                if existing_song['id'] == song.id:
+                    song_exists = True
+                    break
+            
+            if not song_exists:
+                try:
+                    track_info = spotify_client_creds.track(song.spotify_id)
+                    artwork_url = track_info['album']['images'][0]['url'] if track_info['album']['images'] else None
+                except:
+                    artwork_url = None
+                    
+                song_data = {
+                    'id': song.id,
+                    'name': song.name,
+                    'artist': song.artist,
+                    'link': song.link,
+                    'spotify_id': song.spotify_id,
+                    'artwork_url': artwork_url,
+                    'ratings': [],
+                    'average_rating': song.average_rating()
+                }
+                users_data[rating.username].append(song_data)
+            
+            # Convert UTC time to PST
+            utc_time = utc.localize(rating.created_at)
+            pst_time = utc_time.astimezone(pst)
+            
+            # Add rating to the song's ratings list
+            for user_song in users_data[rating.username]:
+                if user_song['id'] == song.id:
+                    user_song['ratings'].append({
+                        'username': rating.username,
+                        'rating': rating.rating,
+                        'date': pst_time.strftime('%m/%d/%Y %I:%M %p PST')
+                    })
+        
+        # Sort each user's songs by average rating
+        for username in users_data:
+            users_data[username] = sorted(
+                users_data[username],
+                key=lambda x: (x['average_rating'], len(x['ratings'])),
+                reverse=True
+            )
+        
+        return render_template('overview.html', users_data=users_data, group_by_user=True, filter_username=username)
+    else:
+        # Original song-based grouping
+        songs_data = {}
+        for rating, song in ratings:
+            if song.id not in songs_data:
+                try:
+                    track_info = spotify_client_creds.track(song.spotify_id)
+                    artwork_url = track_info['album']['images'][0]['url'] if track_info['album']['images'] else None
+                except:
+                    artwork_url = None
+                    
+                songs_data[song.id] = {
+                    'id': song.id,
+                    'name': song.name,
+                    'artist': song.artist,
+                    'link': song.link,
+                    'spotify_id': song.spotify_id,
+                    'artwork_url': artwork_url,
+                    'ratings': [],
+                    'average_rating': song.average_rating()
+                }
+            
+            # Convert UTC time to PST
+            utc_time = utc.localize(rating.created_at)
+            pst_time = utc_time.astimezone(pst)
+            
+            songs_data[song.id]['ratings'].append({
+                'username': rating.username,
+                'rating': rating.rating,
+                'date': pst_time.strftime('%m/%d/%Y %I:%M %p PST')
+            })
 
-    # Convert to list and sort by average rating (highest to lowest)
-    sorted_songs = sorted(
-        songs_data.values(),
-        key=lambda x: (x['average_rating'], len(x['ratings'])),
-        reverse=True
-    )
+        # Convert to list and sort by average rating
+        sorted_songs = sorted(
+            songs_data.values(),
+            key=lambda x: (x['average_rating'], len(x['ratings'])),
+            reverse=True
+        )
 
-    return render_template('overview.html', songs=sorted_songs, filter_username=username)
+        return render_template('overview.html', songs=sorted_songs, group_by_user=group_by_user, filter_username=username)
 
 @app.route('/api/playlist_preview/<playlist_id>', methods=['GET'])
 def playlist_preview(playlist_id):
