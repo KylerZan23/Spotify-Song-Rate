@@ -19,7 +19,8 @@ import urllib.parse
 load_dotenv()
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = secrets.token_hex(16)  # Generate a secure secret key
+# Use a fixed secret key from environment variable, with a default for development
+app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', 'dev-secret-key-123')  # Replace random generation
 app.config['SESSION_COOKIE_NAME'] = 'spotify-login-session'
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///songs.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
@@ -27,7 +28,7 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 # Configure CORS with specific settings
 CORS(app, resources={
     r"/*": {
-        "origins": ["http://localhost:5000"],
+        "origins": ["http://localhost:5001", "http://127.0.0.1:5001"],  # Allow both localhost and 127.0.0.1
         "methods": ["GET", "POST", "OPTIONS"],
         "allow_headers": ["Content-Type", "Authorization"],
         "supports_credentials": True
@@ -37,7 +38,11 @@ CORS(app, resources={
 # Set Spotify credentials
 SPOTIFY_CLIENT_ID = os.getenv('SPOTIFY_CLIENT_ID', '')
 SPOTIFY_CLIENT_SECRET = os.getenv('SPOTIFY_CLIENT_SECRET', '')
-SPOTIFY_REDIRECT_URI = 'http://localhost:5000/callback'
+SPOTIFY_REDIRECT_URI = 'http://localhost:5001/callback'
+
+# Verify required environment variables
+if not SPOTIFY_CLIENT_ID or not SPOTIFY_CLIENT_SECRET:
+    raise ValueError("Missing Spotify API credentials. Please check your .env file.")
 
 db = SQLAlchemy(app)
 
@@ -49,14 +54,6 @@ spotify_client_creds = spotipy.Spotify(auth_manager=SpotifyClientCredentials(
 
 # Initialize OAuth with proper configuration
 cache_handler = FlaskSessionCacheHandler(session)
-auth_manager = SpotifyOAuth(
-    client_id=SPOTIFY_CLIENT_ID,
-    client_secret=SPOTIFY_CLIENT_SECRET,
-    redirect_uri=SPOTIFY_REDIRECT_URI,
-    scope='user-read-private user-read-email user-follow-read playlist-read-collaborative',
-    cache_handler=cache_handler,
-    show_dialog=True
-)
 
 class Playlist(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -562,12 +559,17 @@ def login():
             client_secret=SPOTIFY_CLIENT_SECRET,
             redirect_uri=SPOTIFY_REDIRECT_URI,
             scope='user-read-private user-read-email user-follow-read playlist-read-collaborative',
-            show_dialog=True,
-            cache_handler=cache_handler
+            cache_handler=cache_handler,
+            show_dialog=True
         )
         
-        # Get the authorization URL
-        auth_url = auth_manager.get_authorize_url()
+        # Generate state and store it in session before getting the URL
+        state = secrets.token_urlsafe(16)
+        session['oauth_state'] = state
+        
+        # Get the authorization URL with our state
+        auth_url = auth_manager.get_authorize_url(state=state)
+        
         return redirect(auth_url)
         
     except Exception as e:
@@ -579,6 +581,18 @@ def login():
 def callback():
     """Handle the Spotify OAuth callback"""
     try:
+        # Verify state parameter
+        state = request.args.get('state')
+        stored_state = session.get('oauth_state')
+        
+        print(f"Received state: {state}")
+        print(f"Stored state: {stored_state}")
+        
+        if not state or not stored_state or state != stored_state:
+            print("State verification failed")
+            flash('State verification failed. Please try again.')
+            return redirect(url_for('index'))
+        
         # Create a new OAuth instance
         auth_manager = SpotifyOAuth(
             client_id=SPOTIFY_CLIENT_ID,
@@ -590,7 +604,11 @@ def callback():
         
         # Get the access token
         code = request.args.get('code')
-        token_info = auth_manager.get_access_token(code)
+        if not code:
+            flash('No authorization code received from Spotify.')
+            return redirect(url_for('index'))
+            
+        token_info = auth_manager.get_access_token(code, as_dict=True, check_cache=False)
         
         if not token_info:
             flash('Failed to get access token. Please try again.')
@@ -606,6 +624,9 @@ def callback():
         session['token_info'] = token_info
         session['user_id'] = user_info['id']
         session['display_name'] = user_info['display_name']
+        
+        # Clean up the state
+        session.pop('oauth_state', None)
         
         # Redirect to index with success message
         flash(f'Successfully logged in as {user_info["display_name"]}')
@@ -685,4 +706,4 @@ if __name__ == '__main__':
         db.drop_all()
         db.create_all()
         print("Database initialized successfully!")
-    app.run(debug=True) 
+    app.run(debug=True, port=5001) 
