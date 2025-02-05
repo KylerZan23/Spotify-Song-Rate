@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 import re
 import csv
 from io import StringIO
-from datetime import datetime
+from datetime import datetime, timedelta
 import random
 import pytz
 import secrets
@@ -20,15 +20,19 @@ load_dotenv()
 
 app = Flask(__name__)
 # Use a fixed secret key from environment variable, with a default for development
-app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', 'dev-secret-key-123')  # Replace random generation
+app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', 'dev-secret-key-123')
 app.config['SESSION_COOKIE_NAME'] = 'spotify-login-session'
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(minutes=60)
+app.config['SESSION_COOKIE_SECURE'] = False  # Set to True in production
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///songs.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 # Configure CORS with specific settings
 CORS(app, resources={
     r"/*": {
-        "origins": ["http://localhost:5001", "http://127.0.0.1:5001"],  # Allow both localhost and 127.0.0.1
+        "origins": ["http://localhost:5001"],  # Only use localhost:5001
         "methods": ["GET", "POST", "OPTIONS"],
         "allow_headers": ["Content-Type", "Authorization"],
         "supports_credentials": True
@@ -120,9 +124,14 @@ def extract_spotify_id(spotify_url):
 
 @app.before_request
 def before_request():
+    # Make session permanent but with a lifetime
+    session.permanent = True
     # Ensure session is available
     if not session.get('session_id'):
         session['session_id'] = secrets.token_urlsafe(32)
+    
+    # Log session data for debugging
+    print("Current session data:", dict(session))
 
 @app.route('/')
 def index():
@@ -553,6 +562,15 @@ def playlist_preview(playlist_id):
 def login():
     """Initialize Spotify OAuth when user clicks Personalize"""
     try:
+        # Clear any existing OAuth state
+        session.pop('oauth_state', None)
+        
+        # Generate new state
+        state = secrets.token_urlsafe(16)
+        session['oauth_state'] = state
+        
+        print("Setting new oauth_state in session:", state)
+        
         # Create a new OAuth instance for this request
         auth_manager = SpotifyOAuth(
             client_id=SPOTIFY_CLIENT_ID,
@@ -563,12 +581,11 @@ def login():
             show_dialog=True
         )
         
-        # Generate state and store it in session before getting the URL
-        state = secrets.token_urlsafe(16)
-        session['oauth_state'] = state
-        
         # Get the authorization URL with our state
         auth_url = auth_manager.get_authorize_url(state=state)
+        
+        # Force session to be saved
+        session.modified = True
         
         return redirect(auth_url)
         
@@ -585,8 +602,9 @@ def callback():
         state = request.args.get('state')
         stored_state = session.get('oauth_state')
         
-        print(f"Received state: {state}")
-        print(f"Stored state: {stored_state}")
+        print(f"Callback - Received state: {state}")
+        print(f"Callback - Stored state: {stored_state}")
+        print(f"Callback - Full session data: {dict(session)}")
         
         if not state or not stored_state or state != stored_state:
             print("State verification failed")
@@ -607,8 +625,9 @@ def callback():
         if not code:
             flash('No authorization code received from Spotify.')
             return redirect(url_for('index'))
-            
-        token_info = auth_manager.get_access_token(code, as_dict=True, check_cache=False)
+        
+        # Get token info
+        token_info = auth_manager.get_access_token(code, check_cache=False)
         
         if not token_info:
             flash('Failed to get access token. Please try again.')
@@ -627,6 +646,9 @@ def callback():
         
         # Clean up the state
         session.pop('oauth_state', None)
+        
+        # Force session to be saved
+        session.modified = True
         
         # Redirect to index with success message
         flash(f'Successfully logged in as {user_info["display_name"]}')
