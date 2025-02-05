@@ -670,64 +670,75 @@ def friends_mode():
         return redirect(url_for('index'))
     
     try:
-        # Create Spotify client with stored token
         sp = spotipy.Spotify(auth=token_info['access_token'])
         
+        # Verify that the token is still valid
         try:
-            # Verify the token still works
             sp.current_user()
-        except:
-            # Token might be expired, clear session and redirect to login
+        except Exception as e:
             session.clear()
             flash('Your session has expired. Please log in again.')
             return redirect(url_for('login'))
         
-        # Get friend activity from buddy service
+        # Fetch friend activity from the buddy service
         try:
             friend_activity_response = requests.get('http://localhost:3000/friend-activity')
             friend_activity_response.raise_for_status()
-            friend_activity = friend_activity_response.json()
+            friend_activity_data = friend_activity_response.json()
         except Exception as e:
             print(f"Error fetching friend activity: {str(e)}")
-            friend_activity = {"friends": []}
+            friend_activity_data = {"friends": []}
         
-        # Get user's followed artists and users
-        followed = sp.current_user_followed_artists()
-        friends_data = []
+        # Get the friend activity list
+        friend_activity = friend_activity_data.get('friends', [])
         
-        if followed and 'artists' in followed and 'items' in followed['artists']:
-            for item in followed['artists']['items']:
+        # For each friend from the activity feed, extract their username and get playlists
+        friend_playlists = []
+        seen_usernames = set()  # Track unique usernames to avoid duplicates
+        
+        for activity in friend_activity:
+            friend = activity.get('user', {})
+            friend_uri = friend.get('uri', '')
+            if friend_uri:
+                # Spotify user URIs are in the format "spotify:user:USERNAME"
+                friend_username = friend_uri.split(':')[-1]
+                
+                # Skip if we've already processed this friend
+                if friend_username in seen_usernames:
+                    continue
+                seen_usernames.add(friend_username)
+                
                 try:
-                    if item['type'] == 'user':
-                        friend_info = {
-                            'id': item['id'],
-                            'name': item['display_name'],
-                            'image_url': item['images'][0]['url'] if item.get('images') else None,
-                            'playlists': []
-                        }
-                        
-                        playlists = sp.user_playlists(item['id'])
-                        for playlist in playlists['items']:
-                            if playlist.get('public', True):
-                                friend_info['playlists'].append({
-                                    'id': playlist['id'],
-                                    'name': playlist['name'],
-                                    'image_url': playlist['images'][0]['url'] if playlist.get('images') else None,
-                                    'tracks_total': playlist['tracks']['total']
-                                })
-                        
-                        if friend_info['playlists']:
-                            friends_data.append(friend_info)
+                    playlists_response = sp.user_playlists(friend_username)
+                    playlists = []
+                    # Iterate over the playlists and only add public ones
+                    for playlist in playlists_response.get('items', []):
+                        if playlist.get('public', True):
+                            playlists.append({
+                                'id': playlist['id'],
+                                'name': playlist['name'],
+                                'image_url': playlist['images'][0]['url'] if playlist.get('images') else None,
+                                'tracks_total': playlist['tracks']['total']
+                            })
+                    # Only include friends that have at least one public playlist
+                    if playlists:
+                        friend_playlists.append({
+                            'id': friend_username,
+                            'name': friend.get('name'),
+                            'image_url': friend.get('imageUrl'),
+                            'playlists': playlists
+                        })
                 except Exception as e:
-                    print(f"Error processing user {item['id']}: {str(e)}")
+                    print(f"Error fetching playlists for friend {friend_username}: {str(e)}")
                     continue
         
-        if not friends_data and not friend_activity.get('friends'):
-            flash('No friends activity found. Try following some Spotify users!')
+        if not friend_playlists and not friend_activity:
+            flash('No friends activity or playlists found. Try following some Spotify users!')
         
+        # Render the template with both friend activity and playlists
         return render_template('friends.html', 
-                             friends=friends_data,
-                             friend_activity=friend_activity.get('friends', []))
+                            friend_activity=friend_activity, 
+                            friends=friend_playlists)
         
     except Exception as e:
         flash(f'Error accessing Spotify: {str(e)}')
