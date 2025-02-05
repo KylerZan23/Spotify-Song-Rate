@@ -1,67 +1,135 @@
 # Spotify Song Rate
 
-A Flask web application that allows users to share and rate Spotify songs. The application features two modes:
-1. Input Mode: Share and rate your favorite Spotify songs
-2. Rate Mode: Discover and rate songs shared by other users
+A web application for rating and sharing Spotify songs with friends.
 
-## Setup Instructions
+## Features
 
-1. Clone this repository
-2. Create a virtual environment and activate it:
+- Rate songs from Spotify
+- View song ratings from other users
+- Import songs from playlists
+- Export ratings to CSV
+- View friend activity (NEW!)
+- Group ratings by user
+- Sort by average rating
+- OAuth2 authentication with Spotify
+
+## Architecture
+
+The application consists of two main components:
+
+1. **Flask Application (Main Service)**
+   - Handles user authentication
+   - Manages song ratings
+   - Provides the web interface
+   - Runs on port 5001
+
+2. **Node.js Buddy Service**
+   - Provides friend activity data
+   - Uses unofficial Spotify API
+   - Runs on port 3000
+
+## Prerequisites
+
+- Python 3.9+
+- Node.js 14+
+- npm (comes with Node.js)
+- Spotify Developer Account
+- Spotify Premium Account (for some features)
+
+## Installation
+
+1. Clone the repository:
 ```bash
+git clone https://github.com/KylerZan23/spotify-song-rate.git
+cd spotify-song-rate
+```
+
+2. Set up the Flask application:
+```bash
+# Create and activate virtual environment (optional but recommended)
 python -m venv venv
-source venv/bin/activate  # On Windows use: venv\Scripts\activate
-```
+source venv/bin/activate  # On Windows: venv\Scripts\activate
 
-3. Install the required packages:
-```bash
+# Install dependencies
 pip install -r requirements.txt
-```
-Example
 
-4. Set up your Spotify API credentials:
-   - Go to [Spotify Developer Dashboard](https://developer.spotify.com/dashboard)
-   - Create a new application
-   - Copy your Client ID and Client Secret
-   - Create a `.env` file based on `.env.example` and add your credentials:
-```
-SPOTIFY_CLIENT_ID=your_client_id_here
-SPOTIFY_CLIENT_SECRET=your_client_secret_here
+# Copy example environment file and fill in your details
+cp .env.example .env
 ```
 
-5. Run the application:
+3. Set up the Buddy Service:
+```bash
+cd buddy_service
+npm install
+
+# Copy example environment file and fill in your details
+cp .env.example .env
+```
+
+## Configuration
+
+### Flask Application (.env)
+```env
+SPOTIFY_CLIENT_ID=your_client_id
+SPOTIFY_CLIENT_SECRET=your_client_secret
+FLASK_SECRET_KEY=your_secret_key
+```
+
+### Buddy Service (buddy_service/.env)
+```env
+SP_DC=your_spotify_cookie
+PORT=3000
+```
+
+## Running the Application
+
+1. Start the Flask application:
 ```bash
 python app.py
 ```
 
-6. Open your browser and navigate to `http://localhost:5000`
+2. Start the Buddy Service:
+```bash
+cd buddy_service
+node index.js
+```
 
-## Features
-
-- Share Spotify songs with others
-- Rate songs on a scale of 0-5 (with 0.5 increments)
-- View average ratings for songs
-- Modern, responsive UI with Spotify-inspired design
-- SQLite database for storing songs and ratings
+3. Access the application at http://localhost:5001
 
 ## Usage
 
-### Input Mode
-1. Enter your username
-2. Paste a Spotify song link
-3. Rate the song (0-5)
-4. Submit to add the song to the database
+1. Log in with your Spotify account
+2. Rate songs individually or import from playlists
+3. View your friends' activity
+4. Export your ratings
 
-### Rate Mode
-1. View a random song from the database
-2. Listen to the song on Spotify
-3. Enter your username
-4. Submit your rating
+## Development
 
-## Technologies Used
+- The Flask application uses SQLite for data storage
+- Frontend uses vanilla JavaScript and Bootstrap
+- Friend activity is fetched from a separate microservice
 
-- Flask
-- SQLAlchemy
-- Spotipy (Spotify Web API)
-- Bootstrap 5
-- SQLite 
+## Security Notes
+
+- Never commit .env files
+- Keep your SP_DC cookie private
+- Use HTTPS in production
+- Regularly rotate secret keys
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Commit your changes
+4. Push to the branch
+5. Create a Pull Request
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Acknowledgments
+
+- Spotify Web API
+- Flask-SQLAlchemy
+- spotify-buddylist package 

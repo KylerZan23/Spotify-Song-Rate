@@ -58,16 +58,67 @@
         object-fit: cover;
     }
 
-    .playlist-info h4 {
+    .friend-activity-section {
+        margin-bottom: 3rem;
+    }
+
+    .activity-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+        gap: 1.5rem;
+    }
+
+    .activity-card {
+        background: var(--card);
+        border-radius: 15px;
+        padding: 1rem;
+        display: flex;
+        align-items: center;
+        transition: transform 0.3s ease;
+    }
+
+    .activity-card:hover {
+        transform: translateY(-5px);
+    }
+
+    .activity-artwork {
+        width: 80px;
+        height: 80px;
+        border-radius: 8px;
+        margin-right: 1rem;
+        object-fit: cover;
+    }
+
+    .activity-info {
+        flex: 1;
+    }
+
+    .activity-info h4 {
         margin: 0;
         font-size: 1rem;
         color: var(--foreground);
-        margin-bottom: 0.25rem;
     }
 
-    .playlist-info p {
-        margin: 0;
+    .activity-info p {
+        margin: 0.25rem 0;
         font-size: 0.875rem;
+        color: var(--foreground-muted);
+    }
+
+    .activity-time {
+        font-size: 0.75rem;
+        color: var(--muted-foreground);
+    }
+
+    .section-title {
+        color: var(--foreground);
+        margin-bottom: 1.5rem;
+        font-weight: 600;
+    }
+
+    .no-activity-message {
+        text-align: center;
+        padding: 3rem;
         color: var(--foreground-muted);
     }
 
@@ -82,17 +133,56 @@
     .spotify-link:hover {
         text-decoration: underline;
     }
-
-    .no-friends-message {
-        text-align: center;
-        padding: 3rem;
-        color: var(--foreground-muted);
-    }
 </style>
 
 <div class="container friends-container">
-    <h1 class="display-5 mb-4" style="color: var(--foreground); font-weight: 600;">Your Spotify Friends</h1>
-    
+    <!-- Friend Activity Section -->
+    <div class="friend-activity-section">
+        <h2 class="section-title">Friend Activity</h2>
+        {% if friend_activity %}
+            <div class="activity-grid">
+                {% for activity in friend_activity %}
+                    <div class="activity-card">
+                        {% if activity.track.imageUrl %}
+                            <img src="{{ activity.track.imageUrl }}" alt="{{ activity.track.name }}" class="activity-artwork">
+                        {% else %}
+                            <div class="activity-artwork" style="background: var(--primary)"></div>
+                        {% endif %}
+                        <div class="activity-info">
+                            <h4>{{ activity.user.name }}</h4>
+                            <p>{{ activity.track.name }}</p>
+                            <p>{{ activity.track.artist.name }}</p>
+                            <p class="activity-time">
+                                {{ (activity.timestamp / 1000)|int|timestamp_to_time }}
+                            </p>
+                            <a href="https://open.spotify.com/track/{{ activity.track.uri.split(':')[-1] }}" 
+                               target="_blank" class="spotify-link">
+                                Listen on Spotify
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" 
+                                     class="bi bi-spotify ms-1" viewBox="0 0 16 16">
+                                    <path d="M8 0a8 8 0 1 0 0 16A8 8 0 0 0 8 0zm3.669 11.538a.498.498 0 0 1-.686.165c-1.879-1.147-4.243-1.407-7.028-.77a.499.499 0 0 1-.222-.973c3.048-.696 5.662-.397 7.77.892a.5.5 0 0 1 .166.686zm.979-2.178a.624.624 0 0 1-.858.205c-2.15-1.321-5.428-1.704-7.972-.932a.625.625 0 0 1-.362-1.194c2.905-.881 6.517-.454 8.986 1.063a.624.624 0 0 1 .206.858zm.084-2.268C10.154 5.56 5.9 5.419 3.438 6.166a.748.748 0 1 1-.434-1.432c2.825-.857 7.523-.692 10.492 1.07a.747.747 0 1 1-.764 1.288z"/>
+                                </svg>
+                            </a>
+                        </div>
+                    </div>
+                {% endfor %}
+            </div>
+        {% else %}
+            <div class="no-activity-message">
+                <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" fill="currentColor" 
+                     class="bi bi-music-note mb-3" viewBox="0 0 16 16">
+                    <path d="M9 13c0 1.105-1.12 2-2.5 2S4 14.105 4 13s1.12-2 2.5-2 2.5.895 2.5 2z"/>
+                    <path fill-rule="evenodd" d="M9 3v10H8V3h1z"/>
+                    <path d="M8 2.82a1 1 0 0 1 .804-.98l3-.6A1 1 0 0 1 13 2.22V4L8 5V2.82z"/>
+                </svg>
+                <h3 class="mb-2">No Friend Activity</h3>
+                <p>Your friends haven't listened to anything recently.</p>
+            </div>
+        {% endif %}
+    </div>
+
+    <!-- Friend Playlists Section -->
+    <h2 class="section-title">Friend Playlists</h2>
     {% if friends %}
         {% for friend in friends %}
             <div class="friend-card">
@@ -135,7 +225,7 @@
             </div>
         {% endfor %}
     {% else %}
-        <div class="no-friends-message">
+        <div class="no-activity-message">
             <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" fill="currentColor" class="bi bi-people mb-3" viewBox="0 0 16 16">
                 <path d="M15 14s1 0 1-1-1-4-5-4-5 3-5 4 1 1 1 1h8Zm-7.978-1A.261.261 0 0 1 7 12.996c.001-.264.167-1.03.76-1.72C8.312 10.629 9.282 10 11 10c1.717 0 2.687.63 3.24 1.276.593.69.758 1.457.76 1.72l-.008.002a.274.274 0 0 1-.014.002H7.022ZM11 7a2 2 0 1 0 0-4 2 2 0 0 0 0 4Zm3-2a3 3 0 1 1-6 0 3 3 0 0 1 6 0ZM6.936 9.28a5.88 5.88 0 0 0-1.23-.247A7.35 7.35 0 0 0 5 9c-4 0-5 3-5 4 0 .667.333 1 1 1h4.216A2.238 2.238 0 0 1 5 13c0-1.01.377-2.042 1.09-2.904.243-.294.526-.569.846-.816ZM4.92 10A5.493 5.493 0 0 0 4 13H1c0-.26.164-1.03.76-1.724.545-.636 1.492-1.256 3.16-1.275ZM1.5 5.5a3 3 0 1 1 6 0 3 3 0 0 1-6 0Zm3-2a2 2 0 1 0 0 4 2 2 0 0 0 0-4Z"/>
             </svg>

@@ -36,3 +36,9 @@ yarn-error.log*
 .vscode
 *.swp
 *.swo
+
+# Buddy Service
+buddy_service/node_modules/
+buddy_service/.env
+buddy_service/.env.*
+!buddy_service/.env.example

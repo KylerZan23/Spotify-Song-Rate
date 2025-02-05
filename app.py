@@ -14,6 +14,7 @@ import random
 import pytz
 import secrets
 import urllib.parse
+import requests
 
 # Load environment variables
 load_dotenv()
@@ -681,6 +682,15 @@ def friends_mode():
             flash('Your session has expired. Please log in again.')
             return redirect(url_for('login'))
         
+        # Get friend activity from buddy service
+        try:
+            friend_activity_response = requests.get('http://localhost:3000/friend-activity')
+            friend_activity_response.raise_for_status()
+            friend_activity = friend_activity_response.json()
+        except Exception as e:
+            print(f"Error fetching friend activity: {str(e)}")
+            friend_activity = {"friends": []}
+        
         # Get user's followed artists and users
         followed = sp.current_user_followed_artists()
         friends_data = []
@@ -712,15 +722,64 @@ def friends_mode():
                     print(f"Error processing user {item['id']}: {str(e)}")
                     continue
         
-        if not friends_data:
-            flash('No friends with public playlists found. Try following some Spotify users!')
+        if not friends_data and not friend_activity.get('friends'):
+            flash('No friends activity found. Try following some Spotify users!')
         
-        return render_template('friends.html', friends=friends_data)
+        return render_template('friends.html', 
+                             friends=friends_data,
+                             friend_activity=friend_activity.get('friends', []))
         
     except Exception as e:
         flash(f'Error accessing Spotify: {str(e)}')
         session.clear()  # Clear invalid session
         return redirect(url_for('index'))
+
+@app.route('/api/friend-activity')
+def friend_activity():
+    """Proxy endpoint to fetch friend activity from buddy service"""
+    try:
+        # Check if user is authenticated
+        token_info = session.get('token_info')
+        if not token_info:
+            flash('Please log in using the Personalize button first.')
+            return jsonify({'error': 'Not authenticated'}), 401
+
+        # Call the buddy service
+        response = requests.get('http://localhost:3000/friend-activity')
+        response.raise_for_status()
+        data = response.json()
+        return jsonify(data)
+    except requests.exceptions.ConnectionError:
+        return jsonify({
+            'error': 'Buddy service unavailable',
+            'details': 'Make sure the buddy service is running on port 3000'
+        }), 503
+    except Exception as e:
+        print(f"Error fetching friend activity: {str(e)}")
+        return jsonify({
+            'error': 'Failed to fetch friend activity',
+            'details': str(e)
+        }), 500
+
+@app.template_filter('timestamp_to_time')
+def timestamp_to_time(timestamp):
+    """Convert a Unix timestamp to a relative time string"""
+    now = datetime.now()
+    dt = datetime.fromtimestamp(timestamp)
+    diff = now - dt
+
+    if diff.days > 7:
+        return dt.strftime('%b %d, %Y')
+    elif diff.days > 0:
+        return f'{diff.days}d ago'
+    elif diff.seconds > 3600:
+        hours = diff.seconds // 3600
+        return f'{hours}h ago'
+    elif diff.seconds > 60:
+        minutes = diff.seconds // 60
+        return f'{minutes}m ago'
+    else:
+        return 'Just now'
 
 if __name__ == '__main__':
     with app.app_context():
