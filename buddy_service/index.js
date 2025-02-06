@@ -1,7 +1,7 @@
-require('dotenv').config();
+import 'dotenv/config';
+import express from 'express';
+import * as buddyList from 'spotify-buddylist';
 
-const express = require('express');
-const buddyList = require('spotify-buddylist');
 const app = express();
 const port = process.env.PORT || 3000;
 

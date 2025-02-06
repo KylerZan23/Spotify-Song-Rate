@@ -15,6 +15,7 @@ import pytz
 import secrets
 import urllib.parse
 import requests
+import numpy as np
 
 # Load environment variables
 load_dotenv()
@@ -83,12 +84,13 @@ class Song(db.Model):
     artwork_url = db.Column(db.String(300))
     ratings = db.relationship('Rating', backref='song', lazy=True)
     added_date = db.Column(db.DateTime, default=datetime.utcnow)
+    submitted_by = db.Column(db.String(100))  # New field to track who added the song
 
+    @property
     def average_rating(self):
         if not self.ratings:
             return 0
-        avg = sum(r.rating for r in self.ratings) / len(self.ratings)
-        return round(avg)  # Round to nearest whole number
+        return sum(r.rating for r in self.ratings) / len(self.ratings)
 
     def to_dict(self):
         return {
@@ -98,9 +100,14 @@ class Song(db.Model):
             'artist': self.artist,
             'link': self.link,
             'artwork_url': self.artwork_url,
-            'average_rating': self.average_rating(),
-            'ratings_count': len(self.ratings),
-            'added_date': self.added_date.isoformat() if self.added_date else None
+            'average_rating': self.average_rating,
+            'ratings': [{
+                'username': r.username, 
+                'rating': r.rating,
+                'created_at': r.created_at
+            } for r in self.ratings],
+            'playlists': [{'name': p.name, 'spotify_id': p.spotify_id} for p in self.playlists],
+            'submitted_by': self.submitted_by
         }
 
 class Rating(db.Model):
@@ -108,7 +115,7 @@ class Rating(db.Model):
     username = db.Column(db.String(100), nullable=False)
     rating = db.Column(db.Float, nullable=False)
     song_id = db.Column(db.Integer, db.ForeignKey('song.id'), nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(pytz.UTC))
 
     def to_dict(self):
         return {
@@ -116,7 +123,7 @@ class Rating(db.Model):
             'username': self.username,
             'rating': self.rating,
             'song_id': self.song_id,
-            'created_at': self.created_at.isoformat()
+            'created_at': self.created_at
         }
 
 def extract_spotify_id(spotify_url):
@@ -176,7 +183,8 @@ def input_mode():
                     name=track_info['name'],
                     artist=track_info['artists'][0]['name'],
                     link=spotify_link,
-                    artwork_url=artwork_url
+                    artwork_url=artwork_url,
+                    submitted_by=username  # Track who added the song
                 )
                 db.session.add(song)
                 db.session.commit()
@@ -211,114 +219,170 @@ def input_mode():
 
 @app.route('/rate', methods=['GET', 'POST'])
 def rate_mode():
-    # Get any existing imported songs from session
-    imported_songs = []
-    if 'imported_songs' in session:
-        imported_songs = [Song.query.get(song_id) for song_id in session['imported_songs']]
-        username = session.get('rating_username', '')
-    
     if request.method == 'POST':
-        if 'playlist_id' in request.form:
-            # Handle playlist import
-            playlist_id = request.form.get('playlist_id')
-            username = request.form.get('username')  # Get username for all ratings
-            num_songs = int(request.form.get('num_songs', 5))  # Default to 5 songs
+        form_type = request.form.get('form_type')
+        
+        if form_type == 'single_song':
+            username = request.form.get('username')
+            spotify_link = request.form.get('spotify_link')
+            rating_value = request.form.get('rating')
             
-            if not username:
-                flash('Please provide a username')
+            if not all([username, spotify_link, rating_value]):
+                flash('Please fill in all fields')
                 return redirect(url_for('rate_mode'))
             
             try:
-                # Get all playlist tracks
+                spotify_id = extract_spotify_id(spotify_link)
+                if not spotify_id:
+                    flash('Invalid Spotify link')
+                    return redirect(url_for('rate_mode'))
+                
+                # Get song details from Spotify
+                track = spotify_client_creds.track(spotify_id)
+                
+                # Check if song exists in database
+                song = Song.query.filter_by(spotify_id=spotify_id).first()
+                if not song:
+                    # Create new song if it doesn't exist
+                    song = Song(
+                        spotify_id=spotify_id,
+                        name=track['name'],
+                        artist=track['artists'][0]['name'],
+                        link=track['external_urls']['spotify'],
+                        artwork_url=track['album']['images'][0]['url'] if track['album']['images'] else None,
+                        submitted_by=username
+                    )
+                    db.session.add(song)
+                    db.session.commit()
+                
+                # Check if user has already rated this song
+                existing_rating = Rating.query.filter_by(
+                    username=username,
+                    song_id=song.id
+                ).first()
+
+                if existing_rating:
+                    flash('You have already rated this song!')
+                    return redirect(url_for('rate_mode'))
+                
+                # Add rating
+                rating = Rating(
+                    username=username,
+                    rating=float(rating_value),
+                    song_id=song.id,
+                    created_at=datetime.now(pytz.UTC)
+                )
+                db.session.add(rating)
+                db.session.commit()
+                
+                flash('Rating submitted successfully!')
+                
+            except Exception as e:
+                flash(f'Error: {str(e)}')
+                return redirect(url_for('rate_mode'))
+                
+        elif form_type == 'playlist_import':
+            username = request.form.get('username')
+            playlist_id = request.form.get('playlist_id')
+            track_ids = request.form.getlist('track_ids[]')
+            ratings = request.form.getlist('ratings[]')
+            
+            if not all([username, playlist_id]) or not track_ids or not ratings:
+                flash('Please fill in all fields and rate all songs')
+                return redirect(url_for('rate_mode'))
+            
+            try:
+                # Get playlist details
                 playlist_data = spotify_client_creds.playlist(playlist_id)
-                all_tracks = playlist_data['tracks']['items']
                 
-                # Randomly select tracks
-                selected_tracks = random.sample(all_tracks, min(num_songs, len(all_tracks)))
+                # Create or update playlist in database
+                playlist = Playlist.query.filter_by(spotify_id=playlist_id).first()
+                if not playlist:
+                    playlist = Playlist(
+                        spotify_id=playlist_id,
+                        name=playlist_data['name'],
+                        description=playlist_data.get('description', ''),
+                        owner_id=playlist_data['owner']['id']
+                    )
+                    db.session.add(playlist)
+                    db.session.commit()
                 
-                imported_songs = []
-                for item in selected_tracks:
-                    track = item['track']
-                    # Skip local tracks or None tracks
-                    if not track or track.get('is_local', False):
-                        continue
-                        
-                    # Check if song already exists
-                    existing_song = Song.query.filter_by(spotify_id=track['id']).first()
-                    if not existing_song:
-                        # Get additional track details including artwork
-                        track_info = spotify_client_creds.track(track['id'])
+                # Process each track and its rating
+                processed_count = 0
+                for track_id, rating in zip(track_ids, ratings):
+                    track = spotify_client_creds.track(track_id)
+                    
+                    # Check if song exists
+                    song = Song.query.filter_by(spotify_id=track_id).first()
+                    if not song:
                         song = Song(
-                            spotify_id=track['id'],
+                            spotify_id=track_id,
                             name=track['name'],
                             artist=track['artists'][0]['name'],
                             link=track['external_urls']['spotify'],
-                            artwork_url=track_info['album']['images'][0]['url'] if track_info['album']['images'] else None
+                            artwork_url=track['album']['images'][0]['url'] if track['album']['images'] else None,
+                            submitted_by=username
                         )
                         db.session.add(song)
                         db.session.commit()
-                        imported_songs.append(song)
-                    else:
-                        imported_songs.append(existing_song)
-                
-                if not imported_songs:
-                    flash('No valid songs found in the playlist to import.')
-                    return redirect(url_for('rate_mode'))
-                
-                # Store imported songs and username in session
-                session['imported_songs'] = [song.id for song in imported_songs]
-                session['rating_username'] = username
                     
-                flash(f'Successfully imported {len(imported_songs)} random songs from playlist!')
-                return render_template('rate.html', imported_songs=imported_songs, username=username)
+                    # Create playlist-song relationship if it doesn't exist
+                    if song not in playlist.tracks:
+                        playlist_song = PlaylistSong(
+                            playlist_id=playlist.id,
+                            song_id=song.id,
+                            position=len(playlist.tracks)
+                        )
+                        db.session.add(playlist_song)
+                    
+                    # Add rating
+                    new_rating = Rating(
+                        username=username,
+                        rating=float(rating),
+                        song_id=song.id,
+                        created_at=datetime.now(pytz.UTC)
+                    )
+                    db.session.add(new_rating)
+                    processed_count += 1
+                
+                db.session.commit()
+                flash(f'Successfully imported and rated {processed_count} songs from playlist "{playlist.name}"!')
                 
             except Exception as e:
                 flash(f'Error importing playlist: {str(e)}')
                 return redirect(url_for('rate_mode'))
+    
+    # Get filter parameters for overview functionality
+    group_by_user = request.args.get('group_by_user') == 'true'
+    
+    # Query songs and ratings
+    query = Song.query.order_by(Song.added_date.desc())
+    songs = query.all()
+    # Sort songs by average rating in descending order
+    songs.sort(key=lambda x: x.average_rating, reverse=True)
+    
+    if group_by_user:
+        # Group songs by user and include playlist information
+        users_data = {}
+        for song in songs:
+            for rating in song.ratings:
+                if rating.username not in users_data:
+                    users_data[rating.username] = []
+                if song not in users_data[rating.username]:
+                    # Include playlist information with the song
+                    song_data = song.to_dict()
+                    users_data[rating.username].append(song_data)
         
-        elif 'clear_imported' in request.form:
-            # Clear imported songs from session
-            session.pop('imported_songs', None)
-            session.pop('rating_username', None)
-            return redirect(url_for('rate_mode'))
-        
-        else:
-            # Handle regular song rating
-            username = request.form.get('username')
-            rating = int(request.form.get('rating'))  # Now expecting integer 1-5
-            song_id = int(request.form.get('song_id'))
-
-            if not username or rating < 1 or rating > 5:
-                flash('Please fill all fields correctly. Rating must be between 1 and 5 stars.')
-                return redirect(url_for('rate_mode'))
-
-            # Check if user has already rated this song
-            existing_rating = Rating.query.filter_by(
-                username=username,
-                song_id=song_id
-            ).first()
-
-            if existing_rating:
-                flash('You have already rated this song!')
-                return redirect(url_for('rate_mode'))
-
-            new_rating = Rating(username=username, rating=rating, song_id=song_id)
-            db.session.add(new_rating)
-            db.session.commit()
-            
-            # Remove rated song from imported songs if it exists
-            if 'imported_songs' in session:
-                session['imported_songs'] = [s for s in session['imported_songs'] if s != song_id]
-                if not session['imported_songs']:  # If no more songs to rate
-                    session.pop('imported_songs', None)
-                    session.pop('rating_username', None)
-            
-            flash('Rating added successfully!')
-            return redirect(url_for('rate_mode'))
-
-    # Get a random song that hasn't been rated yet if no imported songs
-    song = None if imported_songs else Song.query.order_by(db.func.random()).first()
-    return render_template('rate.html', song=song, imported_songs=imported_songs, username=session.get('rating_username', ''))
+        # Sort each user's songs by average rating
+        for username in users_data:
+            users_data[username].sort(key=lambda x: x['average_rating'], reverse=True)
+    else:
+        users_data = None
+    
+    return render_template('rate.html',
+                         songs=songs,
+                         users_data=users_data,
+                         group_by_user=group_by_user)
 
 @app.route('/api/playlists/<playlist_id>', methods=['GET'])
 def get_playlist(playlist_id):
@@ -410,149 +474,45 @@ def export_ratings():
         download_name=f'song_ratings{"_" + username if username else ""}.csv'
     )
 
-@app.route('/overview', methods=['GET'])
+@app.route('/overview')
 def overview_mode():
-    # Get username from query parameter if provided
-    username = request.args.get('username', '')
-    
-    # Check if group_by_user is in the request, otherwise use session value or default to false
-    if 'group_by_user' in request.args:
-        group_by_user = request.args.get('group_by_user') == 'true'
-        # Store the preference in session
-        session['group_by_user'] = group_by_user
-    else:
-        # Use stored preference or default to false
-        group_by_user = session.get('group_by_user', False)
-    
-    # Base query for ratings
-    query = db.session.query(Rating, Song).join(Song)
-    
-    # Filter by username if provided
-    if username:
-        query = query.filter(Rating.username == username)
-    
-    # Order by most recent first
-    query = query.order_by(Rating.created_at.desc())
-    
-    # Get all ratings with their associated songs
-    ratings = query.all()
-    
-    # Set up timezone conversion
-    utc = pytz.UTC
-    pst = pytz.timezone('America/Los_Angeles')
-    
-    if group_by_user:
-        # Group by users
-        users_data = {}
-        for rating, song in ratings:
-            if rating.username not in users_data:
-                users_data[rating.username] = []
-            
-            # Check if song already exists in user's list
-            song_exists = False
-            for existing_song in users_data[rating.username]:
-                if existing_song['id'] == song.id:
-                    song_exists = True
-                    break
-            
-            if not song_exists:
-                try:
-                    track_info = spotify_client_creds.track(song.spotify_id)
-                    artwork_url = track_info['album']['images'][0]['url'] if track_info['album']['images'] else None
-                except:
-                    artwork_url = None
-                    
-                song_data = {
-                    'id': song.id,
-                    'name': song.name,
-                    'artist': song.artist,
-                    'link': song.link,
-                    'spotify_id': song.spotify_id,
-                    'artwork_url': artwork_url,
-                    'ratings': [],
-                    'average_rating': song.average_rating()
-                }
-                users_data[rating.username].append(song_data)
-            
-            # Convert UTC time to PST
-            utc_time = utc.localize(rating.created_at)
-            pst_time = utc_time.astimezone(pst)
-            
-            # Add rating to the song's ratings list
-            for user_song in users_data[rating.username]:
-                if user_song['id'] == song.id:
-                    user_song['ratings'].append({
-                        'username': rating.username,
-                        'rating': rating.rating,
-                        'date': pst_time.strftime('%m/%d/%Y %I:%M %p PST')
-                    })
-        
-        # Sort each user's songs by average rating
-        for username in users_data:
-            users_data[username] = sorted(
-                users_data[username],
-                key=lambda x: (x['average_rating'], len(x['ratings'])),
-                reverse=True
-            )
-        
-        return render_template('overview.html', users_data=users_data, group_by_user=True, filter_username=username)
-    else:
-        # Original song-based grouping
-        songs_data = {}
-        for rating, song in ratings:
-            if song.id not in songs_data:
-                try:
-                    track_info = spotify_client_creds.track(song.spotify_id)
-                    artwork_url = track_info['album']['images'][0]['url'] if track_info['album']['images'] else None
-                except:
-                    artwork_url = None
-                    
-                songs_data[song.id] = {
-                    'id': song.id,
-                    'name': song.name,
-                    'artist': song.artist,
-                    'link': song.link,
-                    'spotify_id': song.spotify_id,
-                    'artwork_url': artwork_url,
-                    'ratings': [],
-                    'average_rating': song.average_rating()
-                }
-            
-            # Convert UTC time to PST
-            utc_time = utc.localize(rating.created_at)
-            pst_time = utc_time.astimezone(pst)
-            
-            songs_data[song.id]['ratings'].append({
-                'username': rating.username,
-                'rating': rating.rating,
-                'date': pst_time.strftime('%m/%d/%Y %I:%M %p PST')
-            })
-
-        # Convert to list and sort by average rating
-        sorted_songs = sorted(
-            songs_data.values(),
-            key=lambda x: (x['average_rating'], len(x['ratings'])),
-            reverse=True
-        )
-
-        return render_template('overview.html', songs=sorted_songs, group_by_user=group_by_user, filter_username=username)
+    return redirect(url_for('rate_mode'))
 
 @app.route('/api/playlist_preview/<playlist_id>', methods=['GET'])
 def playlist_preview(playlist_id):
     try:
         playlist_data = spotify_client_creds.playlist(playlist_id)
+        
+        # Get all tracks from playlist (handling pagination)
+        all_tracks = []
+        results = playlist_data['tracks']
+        all_tracks.extend(results['items'])
+        while results['next']:
+            results = spotify_client_creds.next(results)
+            all_tracks.extend(results['items'])
+        
+        # Filter out local tracks and empty tracks
+        valid_tracks = [
+            item['track'] for item in all_tracks 
+            if item['track'] and not item['track'].get('is_local', False)
+        ]
+        
+        # Randomly shuffle the tracks
+        random.shuffle(valid_tracks)
+        
         preview_data = {
             'name': playlist_data['name'],
-            'total_tracks': playlist_data['tracks']['total'],
+            'total_tracks': len(valid_tracks),
             'tracks': []
         }
         
-        # Get first 10 tracks for preview
-        for item in playlist_data['tracks']['items'][:10]:
-            track = item['track']
+        # Take the first 20 tracks after shuffling (we'll limit by user's selection later)
+        for track in valid_tracks[:20]:
             preview_data['tracks'].append({
+                'id': track['id'],
                 'name': track['name'],
-                'artist': track['artists'][0]['name']
+                'artist': track['artists'][0]['name'],
+                'spotify_id': track['id']
             })
         
         return jsonify(preview_data)
@@ -738,7 +698,8 @@ def friends_mode():
         # Render the template with both friend activity and playlists
         return render_template('friends.html', 
                             friend_activity=friend_activity, 
-                            friends=friend_playlists)
+                            friends=friend_playlists,
+                            friend_playlists=True)
         
     except Exception as e:
         flash(f'Error accessing Spotify: {str(e)}')
@@ -772,25 +733,167 @@ def friend_activity():
             'details': str(e)
         }), 500
 
+@app.route('/api/match-playlists', methods=['POST'])
+def match_playlists():
+    """Match playlists based on similarity scores and group similar playlists together."""
+    try:
+        data = request.get_json()
+        playlist_ids = data.get('playlist_ids', [])
+        weights = data.get('weights', {'jaccard': 0.5, 'cosine': 0.5})
+        similarity_threshold = data.get('threshold', 0.6)  # Minimum similarity to be considered in same group
+        
+        if not playlist_ids or len(playlist_ids) < 2:
+            return jsonify({'error': 'At least two playlist IDs are required'}), 400
+            
+        # Fetch all playlists and their tracks
+        playlists_data = {}
+        for playlist_id in playlist_ids:
+            try:
+                playlist = spotify_client_creds.playlist(playlist_id)
+                tracks = []
+                
+                # Get all tracks (handling pagination)
+                results = playlist['tracks']
+                tracks.extend(results['items'])
+                while results['next']:
+                    results = spotify_client_creds.next(results)
+                    tracks.extend(results['items'])
+                
+                # Extract track IDs and audio features
+                track_ids = []
+                for item in tracks:
+                    if item['track'] and not item['track'].get('is_local', False):
+                        track_ids.append(item['track']['id'])
+                
+                # Get audio features for all tracks
+                audio_features = []
+                for i in range(0, len(track_ids), 100):
+                    batch = track_ids[i:i+100]
+                    features = spotify_client_creds.audio_features(batch)
+                    audio_features.extend([f for f in features if f is not None])
+                
+                playlists_data[playlist_id] = {
+                    'name': playlist['name'],
+                    'track_ids': set(track_ids),
+                    'audio_features': audio_features
+                }
+            except Exception as e:
+                print(f"Error fetching playlist {playlist_id}: {str(e)}")
+                continue
+        
+        # Calculate similarity matrix
+        n = len(playlists_data)
+        similarity_matrix = np.zeros((n, n))
+        playlist_ids_list = list(playlists_data.keys())
+        
+        for i in range(n):
+            for j in range(i+1, n):
+                id1, id2 = playlist_ids_list[i], playlist_ids_list[j]
+                data1, data2 = playlists_data[id1], playlists_data[id2]
+                
+                # Calculate Jaccard similarity for track IDs
+                intersection = len(data1['track_ids'].intersection(data2['track_ids']))
+                union = len(data1['track_ids'].union(data2['track_ids']))
+                jaccard_sim = intersection / union if union > 0 else 0
+                
+                # Calculate cosine similarity for audio features
+                features1 = np.array([[
+                    f['danceability'], f['energy'], f['key'], f['loudness'],
+                    f['speechiness'], f['acousticness'], f['instrumentalness'],
+                    f['liveness'], f['valence'], f['tempo']
+                ] for f in data1['audio_features']])
+                
+                features2 = np.array([[
+                    f['danceability'], f['energy'], f['key'], f['loudness'],
+                    f['speechiness'], f['acousticness'], f['instrumentalness'],
+                    f['liveness'], f['valence'], f['tempo']
+                ] for f in data2['audio_features']])
+                
+                # Normalize features
+                features1_mean = np.mean(features1, axis=0)
+                features2_mean = np.mean(features2, axis=0)
+                
+                # Calculate cosine similarity between mean feature vectors
+                cosine_sim = np.dot(features1_mean, features2_mean) / (
+                    np.linalg.norm(features1_mean) * np.linalg.norm(features2_mean)
+                )
+                
+                # Calculate weighted similarity score
+                total_sim = (weights['jaccard'] * jaccard_sim + 
+                           weights['cosine'] * cosine_sim)
+                
+                similarity_matrix[i, j] = total_sim
+                similarity_matrix[j, i] = total_sim
+        
+        # Group playlists using similarity-based clustering
+        groups = []
+        unassigned = set(range(n))
+        
+        while unassigned:
+            # Start a new group with the first unassigned playlist
+            current = unassigned.pop()
+            current_group = [current]
+            
+            # Find all similar playlists
+            to_check = [current]
+            while to_check:
+                playlist_idx = to_check.pop(0)
+                for other_idx in list(unassigned):
+                    if similarity_matrix[playlist_idx, other_idx] >= similarity_threshold:
+                        current_group.append(other_idx)
+                        to_check.append(other_idx)
+                        unassigned.remove(other_idx)
+            
+            # Add group to results
+            group_playlists = [{
+                'id': playlist_ids_list[idx],
+                'name': playlists_data[playlist_ids_list[idx]]['name']
+            } for idx in current_group]
+            
+            # Calculate average similarity within group
+            group_similarities = []
+            for i in range(len(current_group)):
+                for j in range(i+1, len(current_group)):
+                    idx1, idx2 = current_group[i], current_group[j]
+                    group_similarities.append(similarity_matrix[idx1, idx2])
+            
+            avg_similarity = np.mean(group_similarities) if group_similarities else 1.0
+            
+            groups.append({
+                'playlists': group_playlists,
+                'average_similarity': float(avg_similarity)
+            })
+        
+        # Sort groups by size and average similarity
+        groups.sort(key=lambda x: (len(x['playlists']), x['average_similarity']), reverse=True)
+        
+        return jsonify({
+            'groups': groups
+        })
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 @app.template_filter('timestamp_to_time')
 def timestamp_to_time(timestamp):
-    """Convert a Unix timestamp to a relative time string"""
-    now = datetime.now()
-    dt = datetime.fromtimestamp(timestamp)
-    diff = now - dt
-
-    if diff.days > 7:
-        return dt.strftime('%b %d, %Y')
-    elif diff.days > 0:
-        return f'{diff.days}d ago'
-    elif diff.seconds > 3600:
-        hours = diff.seconds // 3600
-        return f'{hours}h ago'
-    elif diff.seconds > 60:
-        minutes = diff.seconds // 60
-        return f'{minutes}m ago'
+    """Convert a timestamp or datetime to a date format in PST"""
+    # Create PST timezone
+    pst = pytz.timezone('America/Los_Angeles')
+    
+    # If timestamp is already a datetime object, make sure it's timezone aware
+    if isinstance(timestamp, datetime):
+        if timestamp.tzinfo is None:
+            # If timestamp is naive, assume it's in UTC and convert to PST
+            dt = pytz.utc.localize(timestamp).astimezone(pst)
+        else:
+            # If timestamp is already timezone aware, just convert to PST
+            dt = timestamp.astimezone(pst)
     else:
-        return 'Just now'
+        # Convert Unix timestamp to PST
+        dt = datetime.fromtimestamp(timestamp, pst)
+    
+    # Return in date format: MM/DD/YYYY
+    return dt.strftime('%m/%d/%Y')
 
 if __name__ == '__main__':
     with app.app_context():
