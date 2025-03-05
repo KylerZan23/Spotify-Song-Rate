@@ -874,6 +874,139 @@ def match_playlists():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+@app.route('/match', methods=['GET', 'POST'])
+def match():
+    if request.method == 'POST':
+        username1 = request.form.get('username1')
+        username2 = request.form.get('username2')
+        
+        # Get ratings for both users from the database
+        user1_ratings = Rating.query.filter_by(username=username1).all()
+        user2_ratings = Rating.query.filter_by(username=username2).all()
+        
+        # Create dictionaries of song_id: rating for each user
+        user1_dict = {rating.song_id: rating.rating for rating in user1_ratings}
+        user2_dict = {rating.song_id: rating.rating for rating in user2_ratings}
+        
+        # Find shared songs
+        shared_song_ids = set(user1_dict.keys()) & set(user2_dict.keys())
+        
+        if not shared_song_ids:
+            match_result = {
+                'percentage': 0,
+                'shared_songs': [],
+                'username1': username1,
+                'username2': username2,
+                'correlation': 0,
+                'correlation_strength': 'No correlation (no shared songs)'
+            }
+        else:
+            # Calculate match percentage using the old method
+            total_diff = 0
+            shared_songs = []
+            
+            # Prepare data for Pearson correlation
+            user1_ratings_list = []
+            user2_ratings_list = []
+            
+            for song_id in shared_song_ids:
+                rating1 = user1_dict[song_id]
+                rating2 = user2_dict[song_id]
+                total_diff += abs(rating1 - rating2)
+                
+                # Add to lists for Pearson correlation
+                user1_ratings_list.append(rating1)
+                user2_ratings_list.append(rating2)
+                
+                # Get song details
+                song = Song.query.get(song_id)
+                shared_songs.append({
+                    'name': song.name,
+                    'artist': song.artist,
+                    'rating1': rating1,
+                    'rating2': rating2
+                })
+            
+            # Calculate percentage (100% - average difference * 20)
+            # A difference of 5 stars = 0% match, 0 stars = 100% match
+            avg_diff = total_diff / len(shared_song_ids)
+            match_percentage = max(0, 100 - (avg_diff * 20))
+            
+            # Calculate Pearson correlation coefficient
+            correlation = calculate_pearson_correlation(user1_ratings_list, user2_ratings_list)
+            
+            # Determine correlation strength
+            correlation_strength = get_correlation_strength(correlation)
+            
+            match_result = {
+                'percentage': round(match_percentage, 1),
+                'shared_songs': shared_songs,
+                'username1': username1,
+                'username2': username2,
+                'correlation': round(correlation, 2),
+                'correlation_strength': correlation_strength
+            }
+        
+        return render_template('match.html', match_result=match_result)
+    
+    return render_template('match.html')
+
+def calculate_pearson_correlation(x, y):
+    """
+    Calculate the Pearson correlation coefficient between two lists of ratings.
+    
+    Args:
+        x (list): First user's ratings
+        y (list): Second user's ratings
+        
+    Returns:
+        float: Pearson correlation coefficient between -1 and 1
+    """
+    if len(x) != len(y) or len(x) < 2:
+        return 0
+    
+    # Calculate means
+    mean_x = sum(x) / len(x)
+    mean_y = sum(y) / len(y)
+    
+    # Calculate numerator (covariance)
+    numerator = sum((xi - mean_x) * (yi - mean_y) for xi, yi in zip(x, y))
+    
+    # Calculate denominator (product of standard deviations)
+    sum_x_squared = sum((xi - mean_x) ** 2 for xi in x)
+    sum_y_squared = sum((yi - mean_y) ** 2 for yi in y)
+    
+    denominator = (sum_x_squared ** 0.5) * (sum_y_squared ** 0.5)
+    
+    # Avoid division by zero
+    if denominator == 0:
+        return 0
+    
+    return numerator / denominator
+
+def get_correlation_strength(correlation):
+    """
+    Convert a correlation coefficient to a descriptive string.
+    
+    Args:
+        correlation (float): Pearson correlation coefficient
+        
+    Returns:
+        str: Description of correlation strength
+    """
+    correlation = abs(correlation)
+    
+    if correlation >= 0.8:
+        return "Very strong"
+    elif correlation >= 0.6:
+        return "Strong"
+    elif correlation >= 0.4:
+        return "Moderate"
+    elif correlation >= 0.2:
+        return "Weak"
+    else:
+        return "Very weak or no correlation"
+
 @app.template_filter('timestamp_to_time')
 def timestamp_to_time(timestamp):
     """Convert a timestamp or datetime to a date format in PST"""

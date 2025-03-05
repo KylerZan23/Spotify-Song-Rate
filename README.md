@@ -11,6 +11,7 @@ A web application for rating and sharing Spotify songs with friends.
 - View friend activity (NEW!)
 - Group ratings by user
 - Sort by average rating
+- Match music taste with other users using Pearson Correlation (NEW!)
 - OAuth2 authentication with Spotify
 
 ## Architecture
@@ -101,7 +102,31 @@ node index.js
 1. Log in with your Spotify account
 2. Rate songs individually or import from playlists
 3. View your friends' activity
-4. Export your ratings
+4. Compare your music taste with other users
+5. Export your ratings
+
+## Music Taste Matching
+
+The application uses two methods to compare music tastes between users:
+
+1. **Simple Difference Method**
+   - Calculates the average difference between ratings for shared songs
+   - Converts to a percentage (100% - average difference * 20)
+   - Easy to understand but less statistically robust
+
+2. **Pearson Correlation Coefficient**
+   - Measures the linear correlation between two users' ratings
+   - Range from -1 to 1:
+     - 1: Perfect positive correlation (identical taste)
+     - 0: No correlation (unrelated taste)
+     - -1: Perfect negative correlation (opposite taste)
+   - Provides a more statistically sound measure of similarity
+   - Accounts for different rating scales between users
+
+The Pearson Correlation is particularly useful because it:
+- Normalizes different rating tendencies (some users might rate everything high)
+- Focuses on patterns rather than absolute values
+- Is a widely accepted statistical measure for comparing preferences
 
 ## Development
 
